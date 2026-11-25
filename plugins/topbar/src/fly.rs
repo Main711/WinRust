@@ -817,7 +817,7 @@ pub fn menu(cx: i32, head: Option<(HICON, &'static str, String, String)>, items:
     MHEAD.set(head);
     MPICK.set(Some(Box::new(pick)));
     MENU_X.set(if vert() { cx } else { cx - sc(MW) / 2 }); // screen anchor: y along a side bar, the menu's left edge otherwise
-    toggle(Kind::Menu);
+    toggle(Kind::Menu, current_bar());
 }
 
 /// (top, bottom) of each menu item in logical px, and the panel height.
@@ -839,7 +839,13 @@ fn menu_rows() -> (Vec<(i32, i32)>, i32) {
 }
 
 /// Right-click menu of an empty spot of the bar.
-pub fn context_menu(x: i32) {
+pub fn context_menu(owner: HWND, x: i32) {
+    unsafe {
+        if !owner.is_null() {
+            CURRENT_BAR.set(owner);
+            set_monitor_rect(bar_rect(owner));
+        }
+    }
     let pu = crate::purge_installed();
     let mut items = vec![
         MItem::new(t!("Параметры Windows", "Windows Settings", ja: "Windows の設定", pt: "Configurações do Windows", zh: "Windows 设置")).hint("Win+I"),
@@ -920,7 +926,14 @@ unsafe fn anim_step(hw: HWND) {
     }
 }
 
-pub fn toggle(k: Kind) {
+pub fn toggle(k: Kind, owner: HWND) {
+    // popups follow the panel they were opened from, whatever the shared context currently says
+    unsafe {
+        if !owner.is_null() {
+            CURRENT_BAR.set(owner);
+            set_monitor_rect(bar_rect(owner));
+        }
+    }
     // The panel counts as open only while its window is alive: Alt+F4 (or anything else destroying the window behind our
     // back) leaves the state saying "open", and then every Win press would only "close" a dead window and never open a new
     // one — the button looks dead until the bar restarts.
@@ -1071,7 +1084,7 @@ unsafe fn run_act(a: Act, rect: RECT, x: i32) {
             SetCapture(FH.get());
             slide(a, x, rect);
         }
-        Act::WifiMore => toggle(Kind::Wifi),
+        Act::WifiMore => toggle(Kind::Wifi, current_bar()),
         Act::WifiSwitch => wifi_radio(WIFI.get() < 0 && NETS.with_borrow(|n| n.is_empty())),
         Act::Tile(i) => match i {
             0 => wifi_radio(WIFI.get() < 0),

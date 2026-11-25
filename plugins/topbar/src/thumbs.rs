@@ -57,6 +57,8 @@ pub(crate) fn card_at(rects: &[RECT], x: i32, y: i32) -> Option<usize> {
 }
 
 thread_local! {
+    static PV_OWNER: Cell<HWND> = const { Cell::new(null_mut()) }; // the panel the previews belong to
+
     // Each popup owns copies of its icons until it is relaid out or closed.
     static CARD_ICONS: RefCell<HashMap<usize, Vec<HICON>>> = RefCell::new(HashMap::new());
 }
@@ -165,7 +167,10 @@ thread_local! {
 }
 
 /// Shows the windows of app button `btn` as live previews above it. False when it has no windows (the caller shows the tip).
-pub(crate) unsafe fn show_preview(btn: i32, cx: i32) -> bool {
+pub(crate) unsafe fn show_preview(owner: HWND, btn: i32, cx: i32) -> bool {
+    if !owner.is_null() {
+        PV_OWNER.set(owner);
+    }
     let wins: Vec<HWND> = BTNS.with_borrow(|b| b.get(btn as usize).map(|b| b.wins.clone()).unwrap_or_default()).into_iter().filter(|&w| IsWindow(w) != 0).collect();
     let pv = PVWND.get();
     if wins.is_empty() || pv.is_null() || btn <= 0 {
@@ -179,6 +184,11 @@ pub(crate) unsafe fn show_preview(btn: i32, cx: i32) -> bool {
 }
 
 unsafe fn layout(pv: HWND, wins: Vec<HWND>, cx: i32) {
+    let owner = PV_OWNER.get();
+    if !owner.is_null() {
+        CURRENT_BAR.set(owner);
+        set_monitor_rect(bar_rect(owner));
+    }
     let pad = sc(GAP);
     let m = monitor_rect();
     let (mut rects, tw, th) = grid(wins.len(), (m.right - m.left) - sc(16) - 2 * pad, (m.bottom - m.top) / 2, sc(CARD_W), sc(CARD_H), sc(GAP));

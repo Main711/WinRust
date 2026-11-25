@@ -57,7 +57,7 @@ pub(crate) unsafe fn save_bitmap(bmp: HBITMAP) -> Option<String> {
 pub(crate) unsafe fn clip_notice(bar: HWND) {
     let name = clip::DONE.lock().ok().and_then(|mut d| d.take()).unwrap_or_default();
     KillTimer(bar, 2);
-    show_tip(tf!("Фрагмент сохранён: {name}\nи скопирован в буфер обмена", "Snip saved: {name}\nand copied to the clipboard", ja: "スニップを保存しました: {name}\nクリップボードにもコピーしました", pt: "Recorte salvo: {name}\ne copiado para a área de transferência", zh: "截图已保存：{name}\n并已复制到剪贴板"), GetSystemMetrics(SM_CXSCREEN) / 2);
+    show_tip(current_bar(), tf!("Фрагмент сохранён: {name}\nи скопирован в буфер обмена", "Snip saved: {name}\nand copied to the clipboard", ja: "スニップを保存しました: {name}\nクリップボードにもコピーしました", pt: "Recorte salvo: {name}\ne copiado para a área de transferência", zh: "截图已保存：{name}\n并已复制到剪贴板"), GetSystemMetrics(SM_CXSCREEN) / 2);
     SetTimer(bar, 6, 2500, None);
 }
 
@@ -68,6 +68,6 @@ pub(crate) unsafe fn screenshot_notice(bar: HWND) {
         None => t!("Не удалось сделать скриншот", "Could not take a screenshot", ja: "スクリーンショットを撮影できませんでした", pt: "Não foi possível capturar a tela", zh: "无法截图").to_string(),
     };
     KillTimer(bar, 2);
-    show_tip(msg, GetSystemMetrics(SM_CXSCREEN) / 2);
+    show_tip(current_bar(), msg, monitor_rect().left + (monitor_rect().right - monitor_rect().left) / 2);
     SetTimer(bar, 6, 2500, None); // timer 6 hides the tip
 }

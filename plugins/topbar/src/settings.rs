@@ -29,7 +29,7 @@ pub(crate) unsafe fn style_menu() {
 
 /// One page of the gear's menu, opened at the gear.
 pub(crate) unsafe fn gear_page(glyph: &'static str, title: &str, sub: &str, items: Vec<fly::MItem>, pick: impl FnOnce(usize) + 'static) {
-    let bar = BAR.load(Relaxed) as HWND;
+    let bar = current_bar();
     fly::menu(tip_cx(&bar_layout(bar), GEAR), Some((null_mut(), glyph, title.to_string(), sub.to_string())), items, pick);
 }
 
@@ -53,8 +53,12 @@ pub(crate) fn style_name(s: i18n::style::Style) -> &'static str {
 
 /// Repaints the bar in the new look; `moved` = its place or size may have changed too.
 pub(crate) unsafe fn relook(moved: bool) {
-    let bar = BAR.load(Relaxed) as HWND;
-    place(bar);
+    let bar = current_bar();
+    if moved {
+        reposition_all_bars();
+    } else {
+        place(bar);
+    }
     if moved {
         bar_anim(bar);
     }
