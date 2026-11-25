@@ -73,7 +73,7 @@ pub(crate) unsafe fn language_page() {
     gear_page("\u{E774}", t!("Язык", "Language", ja: "言語", pt: "Idioma", zh: "语言"), t!("Язык всех программ WinRust", "The language of every WinRust program", ja: "すべての WinRust プログラムの言語", pt: "O idioma de todos os programas da WinRust", zh: "所有 WinRust 程序的语言"), items, move |i| {
         let Some(&l) = i.checked_sub(1).and_then(|k| [En, Ru, Ja, Pt, Zh].get(k)) else { return style_menu() };
         i18n::set_lang(l);
-        InvalidateRect(BAR.load(Relaxed) as HWND, null(), 0);
+        repaint_bars();
         language_page();
     });
 }

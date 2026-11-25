@@ -180,8 +180,8 @@ pub(crate) unsafe fn show_preview(btn: i32, cx: i32) -> bool {
 
 unsafe fn layout(pv: HWND, wins: Vec<HWND>, cx: i32) {
     let pad = sc(GAP);
-    let (scw, sch) = (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
-    let (mut rects, tw, th) = grid(wins.len(), scw - sc(16) - 2 * pad, sch / 2, sc(CARD_W), sc(CARD_H), sc(GAP));
+    let m = monitor_rect();
+    let (mut rects, tw, th) = grid(wins.len(), (m.right - m.left) - sc(16) - 2 * pad, (m.bottom - m.top) / 2, sc(CARD_W), sc(CARD_H), sc(GAP));
     rects.iter_mut().for_each(|r| *r = RECT { left: r.left + pad, top: r.top + pad, right: r.right + pad, bottom: r.bottom + pad });
     let (w, h) = (tw + 2 * pad, th + 2 * pad);
     let old = PV.take();
@@ -189,11 +189,11 @@ unsafe fn layout(pv: HWND, wins: Vec<HWND>, cx: i32) {
     unregister(pv, &mut ids);
     SetWindowRgn(pv, CreateRoundRectRgn(0, 0, w + 1, h + 1, rr(18), rr(18)), 1);
     if vert() {
-        let y = (cx - h / 2).clamp(sc(4), sch - h - sc(4));
+        let y = (cx - h / 2).clamp(m.top + sc(4), m.bottom - h - sc(4));
         SetWindowPos(pv, HWND_TOPMOST, side_x(w), y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     } else {
-        let x = (cx - w / 2).clamp(sc(4), scw - w - sc(4));
-        SetWindowPos(pv, HWND_TOPMOST, x, if at_top() { bar_h() - bar_off() + sc(6) } else { bar_top() + bar_off() - h - sc(6) }, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        let x = (cx - w / 2).clamp(m.left + sc(4), m.right - w - sc(4));
+        SetWindowPos(pv, HWND_TOPMOST, x, if at_top() { bar_top() - bar_off() + sc(6) } else { bar_top() + bar_off() - h - sc(6) }, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
     let ids = register(pv, &wins, &rects);
     PV.set((wins, rects, ids, None));
@@ -251,7 +251,7 @@ pub(crate) unsafe extern "system" fn pv_proc(hwnd: HWND, msg: u32, wp: WPARAM, l
             let mut wr: RECT = zeroed();
             GetWindowRect(hwnd, &mut wr);
             let inside = pt.x >= wr.left && pt.x < wr.right && pt.y >= wr.top && pt.y < wr.bottom;
-            if inside || HOT.get() == PV_BTN.get() {
+            if inside || hot() == PV_BTN.get() {
                 PV_AWAY.set(0);
             } else if PV_AWAY.get() == 0 {
                 PV_AWAY.set(now_ms());
