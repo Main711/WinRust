@@ -34,7 +34,6 @@ use {tray::*, status::*, run::*, shot::*, lang::*, settings::*};
 
 #[derive(Clone, Copy)]
 struct MonitorCtx {
-    monitor: HMONITOR,
     monitor_rect: RECT,
 }
 
@@ -42,31 +41,22 @@ thread_local! {
     static MONITOR_CTX: Cell<Option<MonitorCtx>> = const { Cell::new(None) };
 }
 
-unsafe fn monitor_ctx() -> MonitorCtx {
+unsafe fn monitor_ctx() -> RECT {
     MONITOR_CTX.with(|c| {
         if let Some(ctx) = c.get() {
-            return ctx;
+            return ctx.monitor_rect;
         }
         let monitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
         let mut info: MONITORINFO = zeroed();
         info.cbSize = size_of::<MONITORINFO>() as u32;
         let _ = GetMonitorInfoW(monitor, &mut info);
-        let ctx = MonitorCtx { monitor, monitor_rect: info.rcMonitor };
-        c.set(Some(ctx));
-        ctx
+        let rect = info.rcMonitor;
+        c.set(Some(MonitorCtx { monitor_rect: rect }));
+        rect
     })
 }
 
-unsafe fn set_monitor_ctx(monitor: HMONITOR) {
-    let mut info: MONITORINFO = zeroed();
-    info.cbSize = size_of::<MONITORINFO>() as u32;
-    if GetMonitorInfoW(monitor, &mut info) != 0 {
-        MONITOR_CTX.set(Some(MonitorCtx { monitor, monitor_rect: info.rcMonitor }));
-    }
-}
-
-unsafe fn current_monitor() -> HMONITOR { monitor_ctx().monitor }
-unsafe fn monitor_rect() -> RECT { monitor_ctx().monitor_rect }
+unsafe fn monitor_rect() -> RECT { monitor_ctx() }
 
 unsafe fn primary_monitor() -> HMONITOR {
     MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY)
@@ -646,9 +636,6 @@ unsafe fn show_tip(owner: HWND, s: String, cx: i32) {
         (cx, if at_top() { bar_top() - bar_off() + sc(6) } else { bar_top() + bar_off() - h - sc(6) }.max(fy))
     };
     SetWindowPos(tw, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    {
-        let _ = std::fs::write(r"C:\Users\MainO\Documents\WinRust-MultiMonitor\tip.log", format!("owner={:x} rect={}x{}@{} {} mon=({},{}) vis={}\n", owner as usize, w, h, x, y, monitor_rect().left, monitor_rect().top, IsWindowVisible(tw)));
-    }
     InvalidateRect(tw, null(), 1);
 }
 
@@ -858,7 +845,9 @@ unsafe fn place(hwnd: HWND) {
     ab.hWnd = hwnd;
     // the reserved strip: the bar itself plus the dock's gap under it
     // the dock reserves nothing: maximized windows take the whole monitor and the dock slides away over them
-    let strip = if dock() || i18n::style::autohide() { 0 } else { bar_h() };
+    // Dock is visually a centered pill, but it still owns a full-width bottom band on this monitor.
+    // Only explicit auto-hide gives the work area back.
+    let strip = if i18n::style::autohide() { 0 } else { bar_h() + dock_gap() };
     let is_appbar = state_of(hwnd).appbar;
     if !is_appbar {
     } else if vert() {
@@ -2902,24 +2891,20 @@ unsafe fn activate_monitor(hwnd: HWND) {
 /// Reposition one bar after a display topology or DPI change.
 unsafe fn reposition_bar(hwnd: HWND) {
     // The context is set by the topology enumerator before the initial placement; later calls derive it from the window.
-    let monitor = monitor_for_window(hwnd);
-    if monitor == current_monitor() || !monitor.is_null() {
-        set_monitor_ctx(monitor);
-    }
+    set_monitor_rect(bar_rect(hwnd));
     place(hwnd);
 }
 
 /// Reposition all bar windows after a display topology or DPI change.
 unsafe fn reposition_all_bars() {
-    let primary = primary_monitor();
     let bars = MONITORS.with_borrow(|v| v.clone());
     for bar in &bars {
         if IsWindow(*bar) != 0 {
-            set_monitor_ctx(monitor_for_window(*bar));
+            set_monitor_rect(bar_rect(*bar));
             place(*bar);
         }
     }
-    set_monitor_ctx(primary);
+    set_monitor_rect(monitor_rect_of(primary_monitor()));
 }
 
 /// Creates one panel for `monitor`: registers it as an appbar, accepts explorer's callbacks and file drops, places it
@@ -2941,7 +2926,7 @@ unsafe fn create_bar(monitor: HMONITOR) -> HWND {
     for msg in [WM_DROPFILES, 0x49 /* WM_COPYGLOBALDATA */, WM_COPYDATA] {
         ChangeWindowMessageFilterEx(bar, msg, MSGFLT_ALLOW, null_mut());
     }
-    set_monitor_ctx(monitor);
+    set_monitor_rect(monitor_rect_of(monitor));
     place(bar);
     SetTimer(bar, 1, 1000, None); // status poll; windows come from win_event
     SetTimer(bar, 3, 250, None); // fullscreen watch
@@ -2975,7 +2960,7 @@ unsafe fn monitor_rect_of(monitor: HMONITOR) -> RECT {
 
 /// Points the shared geometry context at a screen rectangle (no handle needed: Windows may hand out a new one).
 unsafe fn set_monitor_rect(rect: RECT) {
-    MONITOR_CTX.set(Some(MonitorCtx { monitor: null_mut(), monitor_rect: rect }));
+    MONITOR_CTX.set(Some(MonitorCtx { monitor_rect: rect }));
 }
 
 /// Registers `hwnd` as an appbar if that got lost (explorer restart, screen change). Every panel is one, so explorer
@@ -3040,7 +3025,7 @@ unsafe fn reconcile_bars() {
             place(bar);
         }
     }
-    set_monitor_ctx(primary_monitor());
+    set_monitor_rect(monitor_rect_of(primary_monitor()));
 }
 
 /// Registers the bar as an appbar with explorer (again after explorer restarts: its list starts empty).
@@ -3088,8 +3073,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 // an app button with windows shows their live previews (#92), anything else its tip
                 if !thumbs::show_preview(hwnd, h, cx) {
                     thumbs::hide_preview();
-                    let dbg = { let r = bar_rect(hwnd); format!("[{} {} {} {}] ", r.left, r.top, r.right, r.bottom) };
-                    show_tip(hwnd, format!("{}{}", dbg, tip_text(h)), cx);
+                    show_tip(hwnd, tip_text(h), cx);
                 }
             }
         }
@@ -3115,7 +3099,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             repaint_bars();
         }
         WM_TIMER if wp == 5 => bar_step(hwnd),
-        WIN_START => fly::toggle(fly::Kind::Start, hwnd),
+        WIN_START => {
+            // Win is an explicit request to bring the shell UI back over a fullscreen app.
+            update_state(hwnd, |state| {
+                state.fullscreen = false;
+                state.desktop_hidden = false;
+            });
+            bar_anim(hwnd);
+            fly::toggle(fly::Kind::Start, hwnd);
+        }
         ALT_TAB => alt_tab(wp == 1),
         WIN_NUM => win_num(wp),
         WIN_X => start_menu(),
@@ -3156,7 +3148,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_MOUSEMOVE => {
             let h = hit(hwnd, (lp & 0xffff) as i16 as i32, (lp >> 16) as i16 as i32);
-            SetWindowTextW(hwnd, wide(&format!("h={h} x={} y={}", (lp & 0xffff) as i16 as i32, (lp >> 16) as i16 as i32)).as_ptr());
             let mut tme = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
             TrackMouseEvent(&mut tme);
             let prev = hot();
